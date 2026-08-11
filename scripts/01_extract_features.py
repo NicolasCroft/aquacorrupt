@@ -16,19 +16,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config
-from src.data import discover_classes, ArrayImageFolder
+from src.data import prepare_datasets
 from src.backbones import load_backbone
 from src.features import extract
 from src import cache
 
 
 def main(device, backbones, corruption, severities):
-    classes = discover_classes(config.TRAIN_DIR)
-    class_to_idx = {c: i for i, c in enumerate(classes)}
-    print(f"Classes: {class_to_idx}")
-
-    train = ArrayImageFolder(config.TRAIN_DIR, class_to_idx, config.IMG_SIZE, config.MAX_PER_CLASS)
-    test = ArrayImageFolder(config.TEST_DIR, class_to_idx, config.IMG_SIZE, config.MAX_PER_CLASS)
+    train, test, class_to_idx, note = prepare_datasets(
+        config.DATA_DIR, config.TRAIN_DIR, config.TEST_DIR,
+        config.IMG_SIZE, config.MAX_PER_CLASS, seed=config.SEED)
+    print(f"dataset: {note}")
+    print(f"classes: {class_to_idx}")
     print(f"train={len(train)} test={len(test)} images")
 
     for bb in backbones:

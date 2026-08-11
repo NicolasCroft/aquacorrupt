@@ -39,6 +39,9 @@ Same seed + severity gives deterministic, paired clean/corrupted samples. Exampl
 ```bash
 pip install -r requirements.txt
 
+# optional: confirm the pipeline runs in your env (no downloads, ~10s, numbers meaningless)
+python smoke_test.py
+
 # 0. get data (Kaggle "Healthy and Bleached Corals"); --download needs ~/.kaggle/kaggle.json
 python scripts/00_download_data.py --download
 
@@ -64,7 +67,8 @@ All knobs live in `config.py` (backbones, corruption, severities, image cap, pat
 
 - The only step that wants a GPU is feature extraction (step 1). Everything after is a logistic regression on cached vectors and runs on a laptop CPU in seconds.
 - The MVP is deliberately small (`MAX_PER_CLASS = 1000`, ViT-B backbones), so even step 1 is CPU-feasible if you are patient.
-- If you want the GPU without a local card, use `notebooks/colab_extract_features.ipynb`: it clones the repo, downloads the data, extracts features on a Colab GPU, and hands you back the cached embeddings (or runs the probe + plot in-notebook). See the repo discussion notes for why an agent cannot drive Colab directly.
+- If you want the GPU without a local card, use `notebooks/colab_extract_features.ipynb`: it clones the repo, downloads the data, extracts features on a Colab GPU, and hands you back the cached embeddings (or runs the probe + plot in-notebook).
+- On a SLURM cluster (for example Stanford Sherlock), stage the dataset on a login node, then `sbatch slurm_extract.sbatch` runs extraction on a GPU node plus the probe and plot.
 
 ---
 
