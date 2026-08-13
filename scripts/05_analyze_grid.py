@@ -97,6 +97,7 @@ def main(backbones, corruptions, severities, n_splits):
         for corr in corruptions:
             accs = {s: float(c[(corr, s)].mean()) for s in severities}
             rets = {s: accs[s] / clean_acc for s in severities}
+            acc_ci = {s: list(ci(c[(corr, s)][idx].mean(1))) for s in severities}
             mr_boot = np.mean(
                 [c[(corr, s)][idx].mean(1) / np.maximum(clean_boot, 1e-9)
                  for s in severities], axis=0)
@@ -104,12 +105,34 @@ def main(backbones, corruptions, severities, n_splits):
             boot[bb][corr] = {"ret": mr_boot, "acc": ma_boot}
             mlo, mhi = ci(mr_boot)
             entry["by_corruption"][corr] = {
-                "acc": accs, "retention": rets,
+                "acc": accs, "acc_ci95": acc_ci, "retention": rets,
                 "mean_retention": float(np.mean(list(rets.values()))),
                 "mean_retention_ci95": [mlo, mhi],
                 "mean_corrupted_acc": float(np.mean(list(accs.values()))),
             }
         results.append(entry)
+
+    # Collect every pairwise test first: with 3 corruptions x 3 pairs = 9 tests at
+    # alpha=0.05 you expect ~0.45 false "separations" by chance, so a raw CI excluding
+    # zero is not on its own evidence. Holm-Bonferroni controls the family-wise error
+    # rate across the whole grid and is uniformly more powerful than plain Bonferroni.
+    tests = []
+    for corr in corruptions:
+        for a, b in itertools.combinations(backbones, 2):
+            d = boot[a][corr]["ret"] - boot[b][corr]["ret"]
+            lo, hi = ci(d)
+            p = float(2 * min((d <= 0).mean(), (d >= 0).mean()))
+            tests.append({"corruption": corr, "a": a, "b": b, "diff": float(d.mean()),
+                          "ci95": [lo, hi], "p_raw": p})
+    m = len(tests)
+    order = sorted(range(m), key=lambda i: tests[i]["p_raw"])
+    running = 0.0
+    for rank, i in enumerate(order):
+        adj = min(1.0, tests[i]["p_raw"] * (m - rank))
+        running = max(running, adj)          # enforce monotonicity
+        tests[i]["p_holm"] = running
+        tests[i]["significant_holm_05"] = bool(running < 0.05)
+    by_pair = {(t["corruption"], t["a"], t["b"]): t for t in tests}
 
     for corr in corruptions:
         print(f"--- {corr} ---")
@@ -126,21 +149,25 @@ def main(backbones, corruptions, severities, n_splits):
         print("  pairwise mean-retention differences (paired bootstrap):")
         sep = False
         for a, b in itertools.combinations(backbones, 2):
-            d = boot[a][corr]["ret"] - boot[b][corr]["ret"]
-            lo, hi = ci(d)
-            p = float(2 * min((d <= 0).mean(), (d >= 0).mean()))
-            excl = lo > 0 or hi < 0
-            sep = sep or excl
-            print(f'    {a:11s} - {b:11s}: {d.mean():+.4f} [{lo:+.4f},{hi:+.4f}] '
-                  f' p~{p:.3f}' + ('   <-- CI excludes 0' if excl else ''))
-        print(f"  => {'SEPARATION' if sep else 'no separation'} on {corr}\n")
+            t = by_pair[(corr, a, b)]
+            lo, hi = t["ci95"]
+            survives = t["significant_holm_05"]
+            sep = sep or survives
+            note = ("   <-- survives Holm" if survives
+                    else "   (raw CI excludes 0, NOT after Holm)"
+                    if (lo > 0 or hi < 0) else "")
+            print(f'    {a:11s} - {b:11s}: {t["diff"]:+.4f} [{lo:+.4f},{hi:+.4f}] '
+                  f' p_raw~{t["p_raw"]:.3f}  p_holm~{t["p_holm"]:.3f}{note}')
+        print(f"  => {'SEPARATION' if sep else 'no separation'} on {corr} "
+              f"(family-wise corrected)\n")
 
     out = config.RESULTS_DIR / "grid_metrics.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
         "n": N, "n_splits": n_splits, "majority_baseline": maj,
         "n_bootstrap": NBOOT, "corruptions": corruptions,
-        "severities": severities, "results": results}, indent=2))
+        "severities": severities, "results": results,
+        "pairwise_tests": tests, "multiple_comparison": "holm-bonferroni"}, indent=2))
     print(f"wrote {out}")
     return results
 

@@ -4,7 +4,13 @@
 
 A small, honest robustness benchmark. We corrupt labeled coral imagery with physically-motivated air-water-interface effects (sun glint, refractive wave distortion, water-column attenuation), then measure how gracefully frozen features from different backbones degrade under a linear probe. No backbone is ever trained, so the whole thing runs cheap.
 
-> **Status: MVP (minimum viable pilot).** This is the afternoon version: three backbones, one corruption (glint) at three severities, one dataset, a linear probe. Its only job is to tell you whether there is any signal worth chasing before you invest in the full study. If the robustness curves separate, build it out (see [Full study](#full-study)). If they do not, you have a clean negative result and you stop.
+> **Status: pilot complete, result is a null.** Three backbones, three corruptions at five
+> severities, one dataset, a linear probe. Its only job was to say whether there is signal
+> worth chasing before investing in the full study. **There is not** — the joint-embedding
+> backbone is statistically indistinguishable from the supervised control on every
+> corruption, and the single significant effect is better explained by augmentation recipe
+> than by pretraining objective. See [Results](#results) before building anything on top
+> of this.
 
 ---
 
@@ -42,10 +48,15 @@ pip install -r requirements.txt
 # optional: confirm the pipeline runs in your env (no downloads, ~10s, numbers meaningless)
 python smoke_test.py
 
-# 0. get data (Kaggle "Healthy and Bleached Corals"); --download needs ~/.kaggle/kaggle.json
+# optional: dataset-layout regression tests (fast, no downloads, no GPU)
+python tests/test_data_layout.py
+
+# 0. get data (Kaggle "Healthy and Bleached Corals").
+#    The dataset is public, so --download works without credentials; the kaggle client
+#    prints an auth banner regardless. Ignore it and check the reported layout.
 python scripts/00_download_data.py --download
 
-# 1. extract frozen features (GPU worth it here; CPU fine if MAX_PER_CLASS is small)
+# 1. extract frozen features (--device cuda | mps | cpu)
 python scripts/01_extract_features.py --device cuda
 
 # 2. linear probe + robustness metrics (CPU, seconds)  -> results/metrics.json
@@ -55,11 +66,79 @@ python scripts/02_run_probe.py
 python scripts/03_plot_curves.py
 ```
 
-Illustrative shape of the output (this figure is from **synthetic** features, just to show what a result looks like; it is not a real measurement):
+**The headline MVP (steps 1-3) is underpowered on purpose-built-small settings.** One
+corruption at three severities, scored on a single 185-image split, cannot resolve the
+differences it is asked about. Steps 4-6 are the version whose null result means
+something — all three corruptions at all five severities, k-fold CV so every image is a
+held-out prediction, and bootstrap confidence intervals on every comparison:
 
-![example result](examples/example_result_SYNTHETIC.png)
+```bash
+# 4. embed every image under clean + 3 corruptions x 5 severities (the long step)
+python scripts/04_extract_full_grid.py --device cuda
+
+# 5. k-fold CV probe + paired bootstrap CIs           -> results/grid_metrics.json
+python scripts/05_analyze_grid.py
+
+# 6. small-multiples figure with CI bands             -> results/robustness_grid.png
+python scripts/06_plot_grid.py
+```
+
+Read `mean_retention` and `mean_corrupted_acc` together. Retention divides each backbone
+by *its own* clean accuracy, so a weak-but-flat backbone can outrank a strong one that
+starts higher and gives up more.
 
 All knobs live in `config.py` (backbones, corruption, severities, image cap, paths).
+
+---
+
+## Results
+
+Kaggle corals (923 images: 485 bleached / 438 healthy), frozen ViT-B backbones, linear
+probe, 5-fold CV so all 923 images are held-out predictions, majority-class baseline
+0.525. Uncertainty is a 10,000-sample paired bootstrap; the nine pairwise tests
+(3 corruptions x 3 backbone pairs) carry a Holm-Bonferroni correction.
+
+![robustness grid](results/robustness_grid.png)
+
+Mean retention (accuracy at severity s, averaged over s=1..5, divided by that backbone's
+own clean accuracy). Clean accuracy: mae 0.803, dinov2 0.782, supervised 0.803.
+
+| backbone | objective | sun_glint | refractive_warp | water_attenuation |
+| --- | --- | --- | --- | --- |
+| `mae` | reconstructive | 0.983 | **0.923** | 0.925 |
+| `dinov2` | joint-embedding | 0.989 | 0.891 | **0.981** |
+| `supervised` | control | **0.997** | 0.912 | 0.971 |
+
+**The hypothesis is not supported.** Three things, in order of how much they matter:
+
+1. **DINOv2 never separates from the supervised control** — on any corruption, at any
+   severity (Holm-adjusted p = 1.00, 0.96, 1.00). The study is built to ask whether a
+   non-reconstructive objective buys robustness that label supervision does not. It
+   does not, anywhere in this grid.
+2. **The only surviving effect is MAE being *worse*** on `water_attenuation`, vs both
+   dinov2 (-0.056, p_holm 0.002) and supervised (-0.047, p_holm 0.008).
+3. **The ordering flips between corruptions.** On `refractive_warp` MAE is nominally the
+   *most* robust of the three — the reverse ranking. That flip does not survive
+   correction (raw p 0.034 -> p_holm 0.239; it is exactly the kind of result that
+   multiple-comparison correction exists to kill), but it means there is no consistent
+   "reconstructive is more fragile" ordering to report even directionally.
+
+**The one real effect is probably augmentation, not objective.** `water_attenuation` is a
+purely photometric corruption: per-channel gain, an additive veil, a contrast wash. MAE
+pretrains with random-resized-crop and horizontal flip essentially alone, while DINOv2
+(color jitter, blur, solarization) and the AugReg supervised ViT (RandAugment, which
+includes color/brightness/contrast/solarize ops) both see heavy photometric augmentation.
+The backbones that saw color augmentation resist a color corruption; the one that did not,
+does not. That is a cleaner explanation of the grid than the pretraining objective, and it
+predicts what we observe on `refractive_warp` — a *geometric* corruption none of the three
+augment for, where nothing separates.
+
+Before building the full study, that confound has to be broken: compare backbones matched
+on augmentation recipe, or add corruptions orthogonal to the augmentations each model saw.
+As it stands, the honest headline is a null on the stated question plus a plausible
+augmentation artifact.
+
+Raw numbers, per-severity CIs, and all nine tests: `results/grid_metrics.json`.
 
 ---
 
