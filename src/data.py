@@ -20,11 +20,18 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
 
 def discover_classes(root: Path):
-    """Return sorted class names = immediate subdirectories that contain images."""
+    """Return sorted class names = immediate subdirectories that DIRECTLY contain images.
+
+    'Directly' matters. Using rglob here instead would make any ancestor of the real class
+    folders look like a single class: for the Kaggle corals layout, data/ has one subdir
+    corals/, which holds no images itself but contains bleached_corals/ and healthy_corals/.
+    A recursive test reports classes == ['corals'], every image gets label 0, and the probe
+    silently scores ~100% on a one-class problem. Keep this non-recursive.
+    """
     root = Path(root)
     classes = []
     for d in sorted(p for p in root.iterdir() if p.is_dir()):
-        if any(f.suffix.lower() in IMG_EXTS for f in d.rglob("*")):
+        if any(f.suffix.lower() in IMG_EXTS for f in d.iterdir() if f.is_file()):
             classes.append(d.name)
     if not classes:
         raise FileNotFoundError(

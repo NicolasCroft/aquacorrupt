@@ -28,6 +28,17 @@ SEVERITIES = MVP_SEVERITIES
 
 # --- Dataset -----------------------------------------------------------------
 # Default MVP dataset: Kaggle "Healthy and Bleached Corals" (simple ImageFolder).
-# Point these at the split folders after you download+unzip (see 00_download_data.py).
+#
+# OBSERVED LAYOUT (as downloaded 2026-08-13 via scripts/00_download_data.py --download):
+# the zip extracts FLAT, with no train/valid split --
+#     data/corals/bleached_corals/*.jpg   (485)
+#     data/corals/healthy_corals/*.jpg    (438)
+# so the two paths below do not exist. That is intentional: src.data.prepare_datasets
+# falls through to its single-folder case and makes a deterministic seeded 80/20
+# stratified split (738 train / 185 test).
+#
+# Do NOT "fix" this by pointing both at data/corals -- prepare_datasets would then find
+# class dirs at both and train and test on the same 923 images, leaking the test set.
+# Only set these to real, disjoint folders if you obtain a pre-split copy.
 TRAIN_DIR = DATA_DIR / "corals" / "train"
 TEST_DIR = DATA_DIR / "corals" / "valid"
