@@ -35,7 +35,7 @@ TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED = "#0b0b0b", "#52514e", "#87867f"
 GRID = "#e3e2dd"
 
 
-def plot_grid(metrics, out_path):
+def plot_grid(metrics, out_path, title=None):
     corruptions = metrics["corruptions"]
     severities = metrics["severities"]
     results = metrics["results"]
@@ -45,10 +45,15 @@ def plot_grid(metrics, out_path):
     order = [r["backbone"] for r in results]
     cmap = {bb: SERIES_COLORS[i % len(SERIES_COLORS)] for i, bb in enumerate(order)}
 
-    fig, axes = plt.subplots(1, len(corruptions), figsize=(4.1 * len(corruptions), 4.0),
-                             dpi=150, sharey=True)
-    if len(corruptions) == 1:
-        axes = [axes]
+    # Wrap to at most 3 panels per row: 6 side by side would be ~25in wide.
+    ncols = min(3, len(corruptions))
+    nrows = -(-len(corruptions) // ncols)
+    fig, axgrid = plt.subplots(nrows, ncols, figsize=(4.1 * ncols, 4.0 * nrows),
+                               dpi=150, sharey=True, squeeze=False)
+    axes = axgrid.ravel()
+    for extra in axes[len(corruptions):]:      # hide unused cells
+        extra.set_visible(False)
+    axes = list(axes[:len(corruptions)])
 
     for ax, corr in zip(axes, corruptions):
         ax.axhline(baseline, color=TEXT_MUTED, lw=1.0, ls=(0, (4, 3)), zorder=1)
@@ -74,9 +79,17 @@ def plot_grid(metrics, out_path):
             ax.spines[side].set_color(GRID)
         ax.tick_params(colors=TEXT_SECONDARY, labelsize=9, length=0)
 
-    axes[0].set_ylabel("held-out linear-probe accuracy", fontsize=9.5,
-                       color=TEXT_SECONDARY)
-    axes[0].set_ylim(0.45, 0.95)
+    for row in range(nrows):                   # y-label on the first panel of each row
+        i = row * ncols
+        if i < len(axes):
+            axes[i].set_ylabel("held-out linear-probe accuracy", fontsize=9.5,
+                               color=TEXT_SECONDARY)
+    # Adaptive limits: the augmentation probes can drop accuracy far below the
+    # physical corruptions' floor, and a hardcoded ylim would clip them off-panel.
+    lows = [b["acc"][str(s)] for r in results for b in r["by_corruption"].values()
+            for s in severities]
+    highs = [r["clean_acc"] for r in results] + lows
+    axes[0].set_ylim(min(min(lows), baseline) - 0.06, max(highs) + 0.05)
     axes[0].annotate("majority-class baseline", xy=(0.04, baseline + 0.012),
                      xycoords=("axes fraction", "data"), fontsize=8, color=TEXT_MUTED)
 
@@ -102,8 +115,8 @@ def plot_grid(metrics, out_path):
     fig.legend(handles, labels, loc="lower center", ncol=len(results), frameon=False,
                fontsize=9.5, labelcolor=TEXT_SECONDARY, bbox_to_anchor=(0.5, -0.015))
     fig.suptitle(
-        f'Frozen-feature robustness to air-water corruption '
-        f'({metrics["n"]} held-out predictions, {metrics["n_splits"]}-fold CV, '
+        (title or "Frozen-feature robustness to air-water corruption") +
+        f' ({metrics["n"]} held-out predictions, {metrics["n_splits"]}-fold CV, '
         f'bands = 95% bootstrap CI)',
         fontsize=11.5, color=TEXT_PRIMARY, y=0.99)
     fig.tight_layout(rect=(0, 0.06, 0.985, 0.96))
@@ -116,9 +129,15 @@ def plot_grid(metrics, out_path):
 
 
 if __name__ == "__main__":
-    src = config.RESULTS_DIR / "grid_metrics.json"
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--metrics", default=str(config.RESULTS_DIR / "grid_metrics.json"))
+    ap.add_argument("--out", default=str(config.RESULTS_DIR / "robustness_grid.png"))
+    ap.add_argument("--title", default=None)
+    args = ap.parse_args()
+    src = Path(args.metrics)
     if not src.exists():
         print(f"[abort] {src} missing. Run scripts/05_analyze_grid.py first.")
         sys.exit(1)
-    p = plot_grid(json.loads(src.read_text()), config.RESULTS_DIR / "robustness_grid.png")
+    p = plot_grid(json.loads(src.read_text()), args.out, args.title)
     print(f"wrote {p}")

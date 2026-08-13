@@ -97,6 +97,13 @@ CORRUPTIONS = {
     "water_attenuation": water_attenuation,
 }
 
+# Diagnostic augmentation probes (see src/aug_probes.py) are dispatchable but deliberately
+# NOT in CORRUPTIONS: that dict is the physically-motivated artifact, and defaults built
+# from it (e.g. scripts/04) must keep meaning "the three air-water corruptions".
+from .aug_probes import AUG_PROBES  # noqa: E402
+
+ALL_TRANSFORMS = {**CORRUPTIONS, **AUG_PROBES}
+
 # The MVP headline: glint only, three severities. Flip to the full grid for the paper.
 MVP_CORRUPTION = "sun_glint"
 MVP_SEVERITIES = [1, 3, 5]
@@ -104,7 +111,8 @@ FULL_SEVERITIES = [1, 2, 3, 4, 5]
 
 
 def apply_corruption(img, name, severity, seed=0):
-    """Dispatch. img: float HxWx3 in [0,1]. Returns same shape/type."""
-    if name not in CORRUPTIONS:
-        raise KeyError(f"unknown corruption {name!r}; have {list(CORRUPTIONS)}")
-    return CORRUPTIONS[name](np.asarray(img, dtype=np.float32), severity, seed)
+    """Dispatch over the physical corruptions plus the diagnostic augmentation probes.
+    img: float HxWx3 in [0,1]. Returns same shape/type."""
+    if name not in ALL_TRANSFORMS:
+        raise KeyError(f"unknown transform {name!r}; have {list(ALL_TRANSFORMS)}")
+    return ALL_TRANSFORMS[name](np.asarray(img, dtype=np.float32), severity, seed)

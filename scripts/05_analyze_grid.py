@@ -58,7 +58,7 @@ def heldout_correct(emb_dir, bb, conditions, n_splits, seed):
     return out, y
 
 
-def main(backbones, corruptions, severities, n_splits):
+def main(backbones, corruptions, severities, n_splits, out_path=None):
     conditions = [("clean", 0)] + [(c, s) for c in corruptions for s in severities]
     missing = [(bb, c, s) for bb in backbones for c, s in conditions
                if not cache.exists(config.EMB_DIR, bb, "all", c, s)]
@@ -161,7 +161,7 @@ def main(backbones, corruptions, severities, n_splits):
         print(f"  => {'SEPARATION' if sep else 'no separation'} on {corr} "
               f"(family-wise corrected)\n")
 
-    out = config.RESULTS_DIR / "grid_metrics.json"
+    out = Path(out_path) if out_path else config.RESULTS_DIR / "grid_metrics.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
         "n": N, "n_splits": n_splits, "majority_baseline": maj,
@@ -178,5 +178,6 @@ if __name__ == "__main__":
     ap.add_argument("--corruptions", nargs="*", default=list(CORRUPTIONS))
     ap.add_argument("--severities", nargs="*", type=int, default=FULL_SEVERITIES)
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--out", default=None, help="output json path")
     args = ap.parse_args()
-    main(args.backbones, args.corruptions, args.severities, args.folds)
+    main(args.backbones, args.corruptions, args.severities, args.folds, args.out)

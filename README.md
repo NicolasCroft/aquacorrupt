@@ -4,13 +4,14 @@
 
 A small, honest robustness benchmark. We corrupt labeled coral imagery with physically-motivated air-water-interface effects (sun glint, refractive wave distortion, water-column attenuation), then measure how gracefully frozen features from different backbones degrade under a linear probe. No backbone is ever trained, so the whole thing runs cheap.
 
-> **Status: pilot complete, result is a null.** Three backbones, three corruptions at five
-> severities, one dataset, a linear probe. Its only job was to say whether there is signal
-> worth chasing before investing in the full study. **There is not** — the joint-embedding
-> backbone is statistically indistinguishable from the supervised control on every
-> corruption, and the single significant effect is better explained by augmentation recipe
-> than by pretraining objective. See [Results](#results) before building anything on top
-> of this.
+> **Status: pilot complete. The hypothesis is not supported, and we know why.** Three
+> backbones, three air-water corruptions plus three augmentation probes, five severities
+> each, 923 images, linear probe. The joint-embedding backbone is indistinguishable from
+> the supervised control on every air-water corruption. The one significant effect is an
+> **augmentation artifact**: a follow-up probe experiment shows backbone robustness ranking
+> *inverts* depending on which photometric transform you apply, tracking the specific
+> augmentation operations each model was pretrained with rather than its objective. See
+> [Results](#results) before building anything on top of this.
 
 ---
 
@@ -133,12 +134,60 @@ does not. That is a cleaner explanation of the grid than the pretraining objecti
 predicts what we observe on `refractive_warp` — a *geometric* corruption none of the three
 augment for, where nothing separates.
 
-Before building the full study, that confound has to be broken: compare backbones matched
-on augmentation recipe, or add corruptions orthogonal to the augmentations each model saw.
-As it stands, the honest headline is a null on the stated question plus a plausible
-augmentation artifact.
-
 Raw numbers, per-severity CIs, and all nine tests: `results/grid_metrics.json`.
+
+### Testing the confound directly
+
+To separate the two explanations we added three **augmentation probes** (`src/aug_probes.py`
+— diagnostics, deliberately *not* part of the physical corruption suite). Each sits inside
+some models' pretraining augmentation distribution and outside others'. Predictions were
+written down before running: the augmentation account expects MAE's deficit to be *larger*
+here than the 0.056 it showed on `water_attenuation`.
+
+![full grid](results/robustness_full.png)
+
+Mean retention, all six transforms, Holm-corrected across all 18 pairwise tests:
+
+| transform | mae | dinov2 | supervised | who trains with it |
+| --- | --- | --- | --- | --- |
+| `sun_glint` | 0.983 | 0.989 | 0.997 | — (no separation) |
+| `refractive_warp` | 0.923 | 0.891 | 0.912 | — (no separation) |
+| `water_attenuation` | 0.925 | **0.981** | 0.971 | photometric: dinov2 + supervised |
+| `solarize` | 0.804 | 0.920 | **0.982** | RandAugment core op; DINOv2 p=0.2, one crop |
+| `grayscale` | 0.804 | **0.963** | 0.817 | DINOv2 random-grayscale; not a RandAugment op |
+| `hue_shift` | 0.903 | **0.981** | 0.879 | DINOv2 color jitter (hue); RandAugment has saturation, not hue |
+
+**This kills the objective hypothesis rather than rescuing it.** The ranking is not stable
+across photometric corruptions — it *inverts*, and it inverts in the direction that
+augmentation exposure predicts, operation by operation:
+
+- **MAE**, with no photometric augmentation at all, is worst or tied-worst on all three
+  probes (deficits of 0.115 / 0.159 / 0.078 vs dinov2, all p_holm < 0.001 — every one
+  larger than its 0.056 deficit on `water_attenuation`, as predicted).
+- **DINOv2** dominates `grayscale` (+0.146) and `hue_shift` (+0.101) over the supervised
+  control — both squarely in its augmentation set — yet **loses** `solarize` to it
+  (-0.062, p_holm 0.002), which is a core RandAugment operation.
+- **Supervised** is statistically indistinguishable from MAE on `grayscale` (p_holm 1.00)
+  and `hue_shift` (p_holm 1.00) — the two ops RandAugment does not cover.
+
+A pretraining objective that conferred general robustness would produce a stable ordering.
+Instead the ordering is a function of which specific augmentation each model happened to
+see. The one "finding" from the physical grid is an augmentation artifact, and the
+supervised control beats the SSL model on a third of the probes, so there is no
+SSL-versus-supervised story either.
+
+One prediction we got wrong, recorded for honesty: we expected `dinov2 - supervised` to
+stay near zero on all three probes, on the reasoning that both pretrain with "heavy
+photometric augmentation." They separate strongly and in both directions. Lumping
+augmentation recipes together was too coarse — the effect resolves at the level of
+individual operations, which is a stronger version of the same account.
+
+**Caveat:** the mapping from model to augmentation operations is read off the published
+recipes (MAE; DINOv2; AugReg), not verified against training code here. That mapping is
+the load-bearing assumption in this interpretation and is worth confirming before it is
+relied on.
+
+Raw numbers for all six: `results/grid_metrics_full.json`.
 
 ---
 
