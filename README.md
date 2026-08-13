@@ -153,9 +153,9 @@ Mean retention, all six transforms, Holm-corrected across all 18 pairwise tests:
 | `sun_glint` | 0.983 | 0.989 | 0.997 | — (no separation) |
 | `refractive_warp` | 0.923 | 0.891 | 0.912 | — (no separation) |
 | `water_attenuation` | 0.925 | **0.981** | 0.971 | photometric: dinov2 + supervised |
-| `solarize` | 0.804 | 0.920 | **0.982** | RandAugment core op; DINOv2 p=0.2, one crop |
-| `grayscale` | 0.804 | **0.963** | 0.817 | DINOv2 random-grayscale; not a RandAugment op |
-| `hue_shift` | 0.903 | **0.981** | 0.879 | DINOv2 color jitter (hue); RandAugment has saturation, not hue |
+| `solarize` | 0.804 | 0.920 | **0.982** | both: RandAugment `Solarize`/`SolarizeAdd`; DINOv2 `RandomSolarize(p=0.2)` on one crop |
+| `grayscale` | 0.804 | **0.963** | 0.817 | DINOv2 only: `RandomGrayscale(p=0.2)`. RandAugment has no grayscale op |
+| `hue_shift` | 0.903 | **0.981** | 0.879 | DINOv2 only: `ColorJitter(hue=0.1, p=0.8)`. RandAugment has no hue op |
 
 **This kills the objective hypothesis rather than rescuing it.** The ranking is not stable
 across photometric corruptions — it *inverts*, and it inverts in the direction that
@@ -168,7 +168,7 @@ augmentation exposure predicts, operation by operation:
   control — both squarely in its augmentation set — yet **loses** `solarize` to it
   (-0.062, p_holm 0.002), which is a core RandAugment operation.
 - **Supervised** is statistically indistinguishable from MAE on `grayscale` (p_holm 1.00)
-  and `hue_shift` (p_holm 1.00) — the two ops RandAugment does not cover.
+  and `hue_shift` (p_holm 1.00) — the two transforms RandAugment has no operation for.
 
 A pretraining objective that conferred general robustness would produce a stable ordering.
 Instead the ordering is a function of which specific augmentation each model happened to
@@ -182,10 +182,25 @@ photometric augmentation." They separate strongly and in both directions. Lumpin
 augmentation recipes together was too coarse — the effect resolves at the level of
 individual operations, which is a stronger version of the same account.
 
-**Caveat:** the mapping from model to augmentation operations is read off the published
-recipes (MAE; DINOv2; AugReg), not verified against training code here. That mapping is
-the load-bearing assumption in this interpretation and is worth confirming before it is
-relied on.
+**The model-to-augmentation mapping is verified against source, not read off papers**
+(it is the load-bearing assumption here, so it should not rest on recollection):
+
+| model | augmentation, from source | probe ops present |
+| --- | --- | --- |
+| `mae` | `facebookresearch/mae` `main_pretrain.py`: `RandomResizedCrop` + `RandomHorizontalFlip` + `ToTensor` + `Normalize`, and nothing else | **none** |
+| `dinov2` | `dinov2/data/augmentations.py`: `ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)` at `p=0.8`, `RandomGrayscale(p=0.2)`, `RandomSolarize(threshold=128, p=0.2)`, `GaussianBlur` | **all three** |
+| `supervised` | RandAugment op set (`timm.data.auto_augment._RAND_TRANSFORMS`): AutoContrast, Equalize, Invert, Rotate, Posterize, **Solarize**, SolarizeAdd, Color, Contrast, Brightness, Sharpness, Shear/Translate | **solarize only** |
+
+The predicted-vs-observed match is exact: the only model with no photometric augmentation
+is worst on every photometric probe; the only probe the supervised model was trained for is
+the only probe it wins.
+
+Two honest qualifications. RandAugment's `Color` operation is saturation scaling with a
+minimum factor of 0.1 (`_enhance_level_to_arg`), so it can reach ~90% desaturation without
+ever being true grayscale — near-grayscale exposure is possible but occasional, and
+empirically bought the supervised model no grayscale robustness at all. And the AugReg
+weights were trained with Google's original JAX pipeline; `timm`'s `_RAND_TRANSFORMS` is a
+faithful reimplementation of that op set, not the literal training code.
 
 Raw numbers for all six: `results/grid_metrics_full.json`.
 
